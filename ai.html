@@ -1,0 +1,30 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simulasi AI | GrowthShare</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <script>
+    function generateIdea() {
+      const kategori = document.getElementById('kategori').value;
+      const output = document.getElementById('output');
+      if (kategori.trim() === '') {
+        output.innerText = 'Silakan masukkan kategori usaha.';
+      } else {
+        output.innerText = `Ide AI untuk usaha kategori "${kategori}":\n- Bangun branding di TikTok\n- Buat paket bundling produk\n- Gunakan pre-order untuk uji pasar`;
+      }
+    }
+  </script>
+</head>
+<body class="bg-white text-gray-800 px-6 py-20">
+  <div class="max-w-xl mx-auto text-center">
+    <h1 class="text-3xl font-bold mb-4">Simulasi Strategi AI</h1>
+    <p class="mb-6">Masukkan kategori usaha kamu, dan lihat saran strategi AI dummy dari GrowthShare.</p>
+    <input id="kategori" type="text" placeholder="Contoh: Kopi, Fashion, UMKM" class="px-4 py-2 border rounded w-full mb-4">
+    <button onclick="generateIdea()" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700">Generate</button>
+    <pre id="output" class="text-left mt-6 bg-gray-100 p-4 rounded whitespace-pre-line"></pre>
+  </div>
+</body>
+</html>
