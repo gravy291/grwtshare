@@ -1,0 +1,540 @@
+import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, addDoc } from 'firebase/firestore';
+
+// Pastikan variabel global ini tersedia di lingkungan Canvas
+// Jika tidak, gunakan nilai default untuk pengembangan lokal
+// CATATAN PENTING: Saat Anda menghosting ini di luar Canvas,
+// Anda perlu mengganti __app_id, __firebase_config, dan __initial_auth_token
+// dengan nilai-nilai yang sesuai dari lingkungan Anda (misalnya, variabel lingkungan atau file konfigurasi).
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? initialAuthToken : null;
+
+// Komponen utama aplikasi
+function App() {
+  // State untuk Firebase dan autentikasi
+  const [db, setDb] = useState(null);
+  const [auth, setAuth] = useState(null);
+  const [userId, setUserId] = useState(null);
+  const [isAuthReady, setIsAuthReady] = useState(false); // Menandakan apakah autentikasi sudah siap
+  const [loading, setLoading] = useState(true); // State loading untuk inisialisasi
+  const [currentPage, setCurrentPage] = useState('auth'); // Halaman saat ini: 'auth' atau 'dashboard'
+  const [message, setMessage] = useState(''); // Pesan notifikasi atau error
+
+  // Inisialisasi Firebase dan autentikasi saat komponen dimuat
+  useEffect(() => {
+    try {
+      const app = initializeApp(firebaseConfig);
+      const firestoreDb = getFirestore(app);
+      const firebaseAuth = getAuth(app);
+
+      setDb(firestoreDb);
+      setAuth(firebaseAuth);
+
+      // Listener untuk perubahan status autentikasi
+      const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
+        if (user) {
+          // Jika user sudah login (baik anonim maupun dengan token)
+          setUserId(user.uid);
+          setIsAuthReady(true);
+          setCurrentPage('dashboard'); // Langsung ke dashboard jika sudah login
+        } else {
+          // Jika tidak ada user, coba login dengan token kustom atau anonim
+          try {
+            if (initialAuthToken) {
+              await signInWithCustomToken(firebaseAuth, initialAuthToken);
+            } else {
+              await signInAnonymously(firebaseAuth);
+            }
+          } catch (error) {
+            console.error("Gagal autentikasi:", error);
+            setMessage(`Gagal autentikasi: ${error.message}`);
+            setIsAuthReady(true); // Tetap set true agar UI bisa dirender
+          }
+        }
+        setLoading(false); // Selesai loading setelah autentikasi
+      });
+
+      return () => unsubscribe(); // Cleanup listener
+    } catch (error) {
+      console.error("Gagal menginisialisasi Firebase:", error);
+      setMessage(`Gagal menginisialisasi aplikasi: ${error.message}`);
+      setLoading(false);
+    }
+  }, []); // Efek ini hanya berjalan sekali saat mount
+
+  // Tampilkan loading screen jika aplikasi sedang diinisialisasi
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 to-black text-white">
+        <p>Memuat aplikasi...</p>
+      </div>
+    );
+  }
+
+  // Komponen untuk formulir autentikasi (login/registrasi)
+  const AuthForm = ({ db, auth, setUserId, setCurrentPage, setMessage }) => {
+    const [email, setEmail] = useState('');
+    const [businessName, setBusinessName] = useState('');
+    const [industry, setIndustry] = useState('');
+    const [isRegistering, setIsRegistering] = useState(false); // State untuk mode registrasi
+
+    // Fungsi untuk menangani submit formulir
+    const handleSubmit = async (e) => {
+      e.preventDefault();
+      setMessage(''); // Bersihkan pesan sebelumnya
+
+      if (!db || !auth) {
+        setMessage('Firebase belum siap.');
+        return;
+      }
+
+      try {
+        let userCredential;
+        if (isRegistering) {
+          // Simulasi registrasi: Buat user anonim dan simpan data profil
+          userCredential = await signInAnonymously(auth);
+          const userRef = doc(db, `artifacts/${appId}/users/${userCredential.user.uid}/profile/data`);
+          await setDoc(userRef, {
+            email: email,
+            businessName: businessName,
+            industry: industry,
+            registeredAt: new Date().toISOString(),
+            // Placeholder untuk upload laporan keuangan
+            financialReports: []
+          }, { merge: true }); // Gunakan merge untuk menghindari overwrite data auth
+          setMessage('Registrasi berhasil! Selamat datang di AI Business Hub.');
+        } else {
+          // Simulasi login: Cukup pastikan user anonim ada atau login dengan token
+          userCredential = auth.currentUser;
+          if (!userCredential) {
+            if (initialAuthToken) {
+              userCredential = await signInWithCustomToken(auth, initialAuthToken);
+            } else {
+              userCredential = await signInAnonymously(auth);
+            }
+          }
+          setMessage('Login berhasil! Selamat datang kembali.');
+        }
+
+        setUserId(userCredential.user.uid);
+        setCurrentPage('dashboard');
+      } catch (error) {
+        console.error("Error autentikasi/registrasi:", error);
+        setMessage(`Gagal: ${error.message}`);
+      }
+    };
+
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 to-black text-white p-4 font-inter">
+        <div className="relative bg-gray-800 bg-opacity-80 backdrop-filter backdrop-blur-lg p-8 rounded-3xl shadow-2xl w-full max-w-2xl border border-gray-700 md:flex md:flex-row overflow-hidden">
+          {/* Left Section: Marketing/Value Proposition */}
+          <div className="md:w-1/2 p-6 flex flex-col justify-center text-center md:text-left border-b md:border-b-0 md:border-r border-gray-700 md:pr-8 mb-6 md:mb-0">
+            <h1 className="text-4xl md:text-5xl font-extrabold text-indigo-400 mb-4 leading-tight">
+              {isRegistering ? 'Optimalkan Bisnis Anda' : 'Kelola Lebih Cerdas'}
+            </h1>
+            <p className="text-gray-300 text-lg mb-6">
+              {isRegistering
+                ? 'Daftar sekarang untuk merasakan efisiensi tak tertandingi dengan AI. Fokus pada pertumbuhan, biarkan kami urus sisanya.'
+                : 'Masuk dan biarkan AI kami mengotomatisasi keuangan serta operasional Anda. Bisnis Anda, lebih efisien dari sebelumnya.'
+              }
+            </p>
+            <ul className="text-gray-400 text-sm space-y-2">
+              <li className="flex items-center justify-center md:justify-start">
+                <svg className="w-5 h-5 mr-2 text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"></path></svg>
+                Manajemen Keuangan Otomatis
+              </li>
+              <li className="flex items-center justify-center md:justify-start">
+                <svg className="w-5 h-5 mr-2 text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"></path></svg>
+                Insight Bisnis Prediktif
+              </li>
+              <li className="flex items-center justify-center md:justify-start">
+                <svg className="w-5 h-5 mr-2 text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"></path></svg>
+                Komunitas Pebisnis Aktif
+              </li>
+            </ul>
+            <p className="text-sm text-gray-500 mt-4">
+              Coba <span className="font-bold text-indigo-300">Free Trial 7 Hari</span> atau analisis sederhana gratis!
+            </p>
+          </div>
+
+          {/* Right Section: Form */}
+          <div className="md:w-1/2 p-6 md:pl-8">
+            <h2 className="text-3xl font-bold text-center mb-6 text-indigo-400">
+              {isRegistering ? 'Daftar Akun Baru' : 'Selamat Datang Kembali'}
+            </h2>
+
+            <form onSubmit={handleSubmit} className="space-y-5">
+              <div>
+                <label htmlFor="email" className="block text-gray-300 text-sm font-medium mb-2">Email Bisnis</label>
+                <input
+                  type="email"
+                  id="email"
+                  className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-white placeholder-gray-400 transition duration-200"
+                  placeholder="nama@bisnisanda.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+              </div>
+              {isRegistering && (
+                <>
+                  <div>
+                    <label htmlFor="businessName" className="block text-gray-300 text-sm font-medium mb-2">Nama Usaha</label>
+                    <input
+                      type="text"
+                      id="businessName"
+                      className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-white placeholder-gray-400 transition duration-200"
+                      placeholder="PT. Maju Jaya / Kedai Kopi Bahagia"
+                      value={businessName}
+                      onChange={(e) => setBusinessName(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="industry" className="block text-gray-300 text-sm font-medium mb-2">Jenis Industri</label>
+                    <select
+                      id="industry"
+                      className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-white transition duration-200"
+                      value={industry}
+                      onChange={(e) => setIndustry(e.target.value)}
+                      required
+                    >
+                      <option value="">Pilih Jenis Industri Anda</option>
+                      <option value="F&B">F&B (Makanan & Minuman)</option>
+                      <option value="Retail">Retail</option>
+                      <option value="Jasa">Jasa Konsultan/Profesional</option>
+                      <option value="Manufaktur">Manufaktur</option>
+                      <option value="Teknologi">Startup Teknologi</option>
+                      <option value="Lainnya">Lainnya</option>
+                    </select>
+                  </div>
+                  {/* Placeholder untuk upload laporan keuangan */}
+                  <div className="border-2 border-dashed border-indigo-600 rounded-xl p-6 text-center text-gray-400 cursor-pointer hover:border-indigo-500 hover:bg-gray-700 transition duration-200">
+                    <input type="file" className="hidden" id="financial-upload" />
+                    <label htmlFor="financial-upload" className="flex flex-col items-center justify-center w-full h-full">
+                      <svg className="w-10 h-10 mb-3 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a3 3 0 013 3v10a2 2 0 002 2H7a2 2 0 01-2-2v-1a2 2 0 00-2-2h-1"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 15l-3-3m0 0l-3 3m3-3V3"></path></svg>
+                      <p className="font-semibold text-lg text-white">Unggah Laporan Keuangan Anda</p>
+                      <p className="text-sm">PDF, Excel. Wajib untuk verifikasi dan analisis AI awal.</p>
+                      <span className="mt-2 text-xs text-indigo-300">Simulasi: File tidak benar-benar diunggah.</span>
+                    </label>
+                  </div>
+                </>
+              )}
+
+              <button
+                type="submit"
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-xl transition duration-300 shadow-lg transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-gray-800"
+              >
+                {isRegistering ? 'Mulai Free Trial & Daftar' : 'Masuk ke Dashboard'}
+              </button>
+            </form>
+
+            {message && (
+              <p className="mt-4 text-center text-sm text-red-400">{message}</p>
+            )}
+
+            <p className="mt-6 text-center text-gray-400 text-sm">
+              {isRegistering ? 'Sudah punya akun?' : 'Belum punya akun?'}
+              <button
+                onClick={() => setIsRegistering(!isRegistering)}
+                className="text-indigo-400 hover:text-indigo-300 font-medium ml-1 focus:outline-none"
+              >
+                {isRegistering ? 'Masuk di sini' : 'Daftar di sini'}
+              </button>
+            </p>
+            <div className="mt-4 text-center text-gray-500 text-xs">
+              <p>ID Aplikasi: <span className="font-mono">{appId}</span></p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Komponen Dashboard
+  const Dashboard = ({ userId, auth, db, setCurrentPage, setMessage }) => {
+    const [userProfile, setUserProfile] = useState(null);
+    const [isSimulatingAI, setIsSimulatingAI] = useState(false);
+    const [aiMessage, setAiMessage] = useState('');
+    const [communityPosts, setCommunityPosts] = useState([]);
+    const [newPostContent, setNewPostContent] = useState('');
+
+    // Ambil profil user dan dengarkan update data secara real-time
+    useEffect(() => {
+      if (!db || !userId) return;
+
+      const userDocRef = doc(db, `artifacts/${appId}/users/${userId}/profile/data`);
+      const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
+        if (docSnap.exists()) {
+          setUserProfile(docSnap.data());
+        } else {
+          console.log("Profil user tidak ditemukan!");
+          setUserProfile(null);
+        }
+      }, (error) => {
+        console.error("Error mengambil profil user:", error);
+        setMessage(`Gagal memuat profil: ${error.message}`);
+      });
+
+      // Ambil postingan komunitas (simulasi)
+      const communityCollectionRef = collection(db, `artifacts/${appId}/public/data/community_posts`);
+      const unsubscribeCommunity = onSnapshot(communityCollectionRef, (snapshot) => {
+        const posts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setCommunityPosts(posts.sort((a, b) => b.timestamp - a.timestamp)); // Urutkan terbaru
+      }, (error) => {
+        console.error("Error memuat postingan komunitas:", error);
+      });
+
+      return () => {
+        unsubscribe();
+        unsubscribeCommunity();
+      }; // Cleanup listener
+    }, [db, userId]);
+
+    // Fungsi untuk logout
+    const handleLogout = async () => {
+      try {
+        await auth.signOut();
+        setUserId(null);
+        setCurrentPage('auth');
+        setMessage('Anda telah keluar.');
+      } catch (error) {
+        console.error("Error logout:", error);
+        setMessage(`Gagal keluar: ${error.message}`);
+      }
+    };
+
+    // Simulasi aksi AI (misal: Otomatisasi Rekonsiliasi)
+    const simulateAIAction = () => {
+      setIsSimulatingAI(true);
+      setAiMessage('AI sedang menganalisis data keuangan Anda untuk rekonsiliasi otomatis...');
+      setTimeout(() => {
+        setAiMessage('Rekonsiliasi otomatis selesai! Saldo Anda telah diperbarui.');
+        setIsSimulatingAI(false);
+      }, 3000); // Simulasi proses 3 detik
+    };
+
+    // Fungsi untuk menambah postingan komunitas
+    const handleAddPost = async () => {
+      if (!newPostContent.trim()) {
+        setMessage('Konten postingan tidak boleh kosong.');
+        return;
+      }
+      if (!db || !userId || !userProfile) {
+        setMessage('Aplikasi belum siap untuk posting.');
+        return;
+      }
+
+      try {
+        const communityCollectionRef = collection(db, `artifacts/${appId}/public/data/community_posts`);
+        await addDoc(communityCollectionRef, {
+          content: newPostContent,
+          authorId: userId,
+          authorName: userProfile.businessName || 'Pengguna Anonim',
+          industry: userProfile.industry || 'Umum',
+          timestamp: Date.now(),
+        });
+        setNewPostContent('');
+        setMessage('Postingan berhasil ditambahkan!');
+      } catch (error) {
+        console.error("Error menambahkan postingan:", error);
+        setMessage(`Gagal menambahkan postingan: ${error.message}`);
+      }
+    };
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-900 to-black text-white flex flex-col font-inter">
+        {/* Header Dashboard */}
+        <header className="bg-gray-800 bg-opacity-80 backdrop-filter backdrop-blur-lg p-4 shadow-md flex justify-between items-center rounded-b-xl border-b border-gray-700">
+          <h1 className="text-2xl font-bold text-indigo-400">AI Business Hub</h1>
+          <div className="flex items-center space-x-4">
+            <span className="text-gray-400 text-sm hidden md:block">ID Pengguna: <span className="font-mono">{userId}</span></span>
+            <button
+              onClick={handleLogout}
+              className="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg transition duration-200 transform hover:scale-105"
+            >
+              Keluar
+            </button>
+          </div>
+        </header>
+
+        {/* Konten Dashboard */}
+        <main className="flex-grow p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Kolom Kiri: Ringkasan Bisnis & AI Tools */}
+          <div className="lg:col-span-2 space-y-6">
+            <div className="bg-gray-800 bg-opacity-80 backdrop-filter backdrop-blur-lg p-6 rounded-xl shadow-lg border border-gray-700">
+              <h2 className="text-xl font-semibold mb-4 text-indigo-300">Selamat Datang, {userProfile?.businessName || 'Pengguna'}!</h2>
+              <p className="text-gray-400 mb-4">
+                ID Bisnis Anda: <span className="font-mono text-sm bg-gray-700 p-1 rounded-md">{userId}</span>
+              </p>
+              <p className="text-gray-300">
+                Ranah Industri Anda: <span className="font-medium text-indigo-300">{userProfile?.industry || 'Belum Terdaftar'}</span>
+              </p>
+            </div>
+
+            {/* AI Financial Insights */}
+            <div className="bg-gray-800 bg-opacity-80 backdrop-filter backdrop-blur-lg p-6 rounded-xl shadow-lg border border-gray-700">
+              <h2 className="text-xl font-semibold mb-4 text-green-400">Insight Keuangan AI</h2>
+              <div className="flex justify-between items-center mb-4">
+                <p className="text-gray-300">Skor Kesehatan Bisnis (BHS): <span className="text-2xl font-bold text-green-500">85/100</span></p>
+                <span className="text-sm text-gray-400">Diperbarui: {new Date().toLocaleDateString()}</span>
+              </div>
+              <p className="text-gray-400 mb-4">
+                AI menganalisis arus kas Anda secara real-time.
+                <br />
+                <span className="text-yellow-400">Peringatan:</span> Ada potensi kekurangan kas dalam 15 hari jika tren pengeluaran berlanjut.
+              </p>
+              <button
+                onClick={simulateAIAction}
+                disabled={isSimulatingAI}
+                className={`bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition duration-300 transform hover:scale-105 ${isSimulatingAI ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                {isSimulatingAI ? 'AI Sedang Bekerja...' : 'Otomatisasi Rekonsiliasi Arus Kas'}
+              </button>
+              {aiMessage && (
+                <p className="mt-3 text-sm text-indigo-300 animate-pulse">{aiMessage}</p>
+              )}
+            </div>
+
+            {/* Operational Tools & Templates */}
+            <div className="bg-gray-800 bg-opacity-80 backdrop-filter backdrop-blur-lg p-6 rounded-xl shadow-lg border border-gray-700">
+              <h2 className="text-xl font-semibold mb-4 text-purple-400">Tools Operasional & Template</h2>
+              <p className="text-gray-400 mb-4">
+                Gunakan template cerdas dan fitur otomatisasi untuk efisiensi operasional.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-gray-700 p-4 rounded-lg border border-gray-600">
+                  <h3 className="font-semibold text-lg text-white">Manajemen Inventori AI</h3>
+                  <p className="text-gray-400 text-sm">Otomatisasi stok dan peringatan restock.</p>
+                  <button className="mt-3 bg-purple-600 hover:bg-purple-700 text-white text-sm py-2 px-4 rounded-lg transform hover:scale-105 transition duration-200">
+                    Akses Modul
+                  </button>
+                </div>
+                <div className="bg-gray-700 p-4 rounded-lg border border-gray-600">
+                  <h3 className="font-semibold text-lg text-white">Template Laporan Penjualan</h3>
+                  <p className="text-gray-400 text-sm">Template Excel siap pakai untuk industri {userProfile?.industry || 'Anda'}.</p>
+                  <button className="mt-3 bg-purple-600 hover:bg-purple-700 text-white text-sm py-2 px-4 rounded-lg transform hover:scale-105 transition duration-200">
+                    Unduh Template
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Kolom Kanan: Komunitas & Edukasi (Mirip Instagram) */}
+          <div className="lg:col-span-1 bg-gray-800 bg-opacity-80 backdrop-filter backdrop-blur-lg p-6 rounded-xl shadow-lg border border-gray-700 flex flex-col">
+            <h2 className="text-xl font-semibold mb-4 text-orange-400">Komunitas Bisnis ({userProfile?.industry || 'Umum'})</h2>
+
+            {/* Area Buat Postingan Baru */}
+            <div className="mb-6 border-b border-gray-700 pb-4">
+              <textarea
+                className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 text-white placeholder-gray-400 resize-y transition duration-200"
+                rows="3"
+                placeholder="Bagikan insight atau pertanyaan bisnis Anda..."
+                value={newPostContent}
+                onChange={(e) => setNewPostContent(e.target.value)}
+              ></textarea>
+              <button
+                onClick={handleAddPost}
+                className="mt-3 w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded-lg transition duration-200 transform hover:scale-105"
+              >
+                Posting
+              </button>
+            </div>
+
+            {/* Feed Komunitas */}
+            <div className="flex-grow overflow-y-auto custom-scrollbar pr-2">
+              {communityPosts.length > 0 ? (
+                communityPosts.map((post) => (
+                  <div key={post.id} className="bg-gray-700 p-4 rounded-lg mb-4 border border-gray-600">
+                    <div className="flex items-center mb-2">
+                      <div className="w-8 h-8 bg-indigo-500 rounded-full flex items-center justify-center text-white font-bold text-sm mr-3">
+                        {post.authorName.charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="font-semibold text-white">{post.authorName}</p>
+                        <p className="text-xs text-gray-400">{post.industry} • {new Date(post.timestamp).toLocaleString()}</p>
+                      </div>
+                    </div>
+                    <p className="text-gray-300 text-sm mb-3">{post.content}</p>
+                    <div className="flex space-x-4 text-gray-400 text-sm">
+                      <button className="flex items-center hover:text-white transition duration-150">
+                        <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path d="M10 18a8 8 0 100-16 8 8 0 000 16zM7 9a1 1 0 000 2h6a1 1 0 100-2H7z"></path></svg>
+                        Bermanfaat (0)
+                      </button>
+                      <button className="flex items-center hover:text-white transition duration-150">
+                        <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fillRule="evenodd" d="M18 10c0 3.866-3.582 7-8 7a8.841 8.041 0 01-4.76-1.39A6.456 6.456 0 002 14.5V10c0-3.866 3.582-7 8-7s8 3.134 8 7zM7 9a1 1 0 000 2h6a1 1 0 100-2H7z" clipRule="evenodd"></path></svg>
+                        Komentar (0)
+                      </button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="text-gray-400 text-center">Belum ada postingan di komunitas ini. Jadilah yang pertama!</p>
+              )}
+            </div>
+          </div>
+        </main>
+
+        {message && (
+          <div className="fixed bottom-4 right-4 bg-gray-700 text-white p-3 rounded-lg shadow-xl animate-fade-in-up">
+            {message}
+          </div>
+        )}
+
+        {/* Custom Scrollbar Styling */}
+        <style>{`
+          .font-inter {
+            font-family: 'Inter', sans-serif;
+          }
+          .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+          }
+          .custom-scrollbar::-webkit-scrollbar-track {
+            background: #374151; /* bg-gray-700 */
+            border-radius: 10px;
+          }
+          .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #6366f1; /* indigo-500 */
+            border-radius: 10px;
+          }
+          .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #4f46e5; /* indigo-600 */
+          }
+          @keyframes fade-in-up {
+            from {
+              opacity: 0;
+              transform: translateY(20px);
+            }
+            to {
+              opacity: 1;
+              transform: translateY(0);
+            }
+          }
+          .animate-fade-in-up {
+            animation: fade-in-up 0.5s ease-out forwards;
+          }
+        `}</style>
+      </div>
+    );
+  };
+
+  // Render halaman berdasarkan currentPage
+  switch (currentPage) {
+    case 'auth':
+      return <AuthForm db={db} auth={auth} setUserId={setUserId} setCurrentPage={setCurrentPage} setMessage={setMessage} />;
+    case 'dashboard':
+      return <Dashboard userId={userId} auth={auth} db={db} setCurrentPage={setCurrentPage} setMessage={setMessage} />;
+    default:
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 to-black text-white">
+          <p>Halaman tidak ditemukan.</p>
+        </div>
+      );
+  }
+}
+
+export default App;
